@@ -315,6 +315,11 @@ table.dt tr.sec-row td{letter-spacing:.08em}
 .colmenu-b{margin-top:8px}.colmenu-n{font-size:11px;color:var(--muted);margin-top:6px}
 .xs-dlg{border:0;border-radius:16px;padding:0;width:min(760px,94vw);max-height:88vh;background:var(--surface);color:var(--text);box-shadow:0 24px 60px rgba(0,0,0,.3)}
 .xs-dlg::backdrop{background:rgba(15,28,46,.45)}
+.aviso-consol{margin:0 0 16px;border-left:3px solid var(--warn);font-size:13px;color:var(--text)}
+.aviso-consol b{color:var(--warn)}
+.av-dlg{width:min(520px,92vw)}
+.av-dlg .av-body{padding:22px 24px 8px;font-size:14px;line-height:1.6;color:var(--text-2)}
+.av-dlg .av-foot{padding:14px 24px 20px;display:flex;justify-content:flex-end}
 .xs-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:10px;padding:18px 20px 12px;border-bottom:1px solid var(--border)}
 .xs-body{padding:12px 20px;overflow:auto;max-height:60vh}
 .xs-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 20px;border-top:1px solid var(--border)}
@@ -458,6 +463,8 @@ td.ir-hlc,th.ir-hlc{background:color-mix(in srgb,var(--brand-2) 13%,transparent)
       <button class="tab solo-admin" role="tab" data-view="usr" aria-selected="false">Usuarios</button>
     </div>
   </section>
+
+  <div id="notaConsol" class="note aviso-consol" role="note" hidden><b>Nota:</b> Las cifras consolidadas no incluyen a <b>Lynx Cartagena</b>. Se hizo una solicitud de información y el reporte se actualizará en cuanto la envíen.</div>
 
   <section id="v-pend" hidden>
     <div class="card p-6"><div class="kpi-label">Pendiente</div><div style="font-size:20px;font-weight:650;margin-top:6px" id="pendTitle"></div><div class="empty mt-4" style="border:0;padding:0;background:transparent"><div class="cols" id="pendCols"></div></div></div>
@@ -703,6 +710,11 @@ td.ir-hlc,th.ir-hlc{background:color-mix(in srgb,var(--brand-2) 13%,transparent)
     <div class="card p-4"><h3 class="mb-3">Archivos que alimentan el dashboard</h3><div class="scroll-x" id="tArch"></div></div>
   </section>
   <div class="toast" id="toast" hidden></div>
+  <dialog id="dlgAviso" class="xs-dlg av-dlg" aria-labelledby="avTit">
+    <div class="av-body"><div class="hdr-kicker" style="color:var(--brand-2)">Aviso</div><div id="avTit" style="font-size:18px;font-weight:700;color:var(--text);margin:4px 0 10px">Sociedades en proceso de incorporación</div>
+      <p><b>Hyland</b> y <b>Blondie</b> no están incluidas por ahora en este dashboard. Se incorporarán próximamente; cuando eso ocurra, sus cifras se sumarán al consolidado y aparecerán en el filtro de sociedades.</p></div>
+    <div class="av-foot"><button type="button" class="btn pri" id="avOk">Entendido</button></div>
+  </dialog>
   <dialog id="dlgXls" class="xs-dlg">
     <div class="xs-head"><div><div class="hdr-kicker" style="color:var(--brand-2)">Descargar Excel</div><div style="font-size:18px;font-weight:700">¿Qué quieres incluir?</div></div>
       <div class="flex flex-wrap gap-2"><button type="button" class="chip" id="xsTodo">Todo</button><button type="button" class="chip" id="xsGer">Solo informe gerencial</button><button type="button" class="chip" id="xsDat">Solo datos de origen</button></div></div>
@@ -1452,6 +1464,7 @@ const Gate = (function () {
     document.body.classList.toggle("puede-editar", perfil.rol === "admin" || perfil.rol === "editor");
     $("gate").remove();
     vigilarInactividad();
+    try { const d = $("dlgAviso"); if (d && d.showModal) { $("avOk").onclick = () => d.close(); d.showModal(); } } catch (e) {}
   }
   async function iniciar() {
     let aviso = null; try { aviso = sessionStorage.getItem("pantera_gate_msg"); sessionStorage.removeItem("pantera_gate_msg"); } catch (e) {}
@@ -1553,6 +1566,8 @@ function bucket(c){
   return "OPX";
 }
 const BUCKET_LABEL={AC:"Activo corriente",ANC:"Activo no corriente",PC:"Pasivo corriente",PLP:"Préstamos",PAT:"Patrimonio",ING:"Ingresos",COS:"Costos directos",PLA:"Planilla",OPX:"Gastos operativos",DEP:"Depreciación",FIN:"Gastos financieros",OTR:"Otros"};
+const CTA_HOSP="603024"; // Bobcat: Hospedaje y alimentación (grupo 603, se muestra aparte de la planilla)
+const grupoCta=c=>c===CTA_HOSP?"Hospedaje y alimentación":BUCKET_LABEL[bucket(c)];
 const isPL=c=>"45678".includes(c[0]);
 
 // ---------- Datos ----------
@@ -1569,7 +1584,7 @@ function plOf(acc){
   const b={ING:0,COS:0,PLA:0,OPX:0,DEP:0,FIN:0,OTR:0};
   for(const[c,v]of Object.entries(acc)) if(isPL(c)) b[bucket(c)]+=v;
   const rev=-b.ING,gross=rev-b.COS,ebitda=gross-b.PLA-b.OPX,net=ebitda-b.DEP-b.FIN-b.OTR;
-  return {rev,cos:b.COS,pla:b.PLA,opx:b.OPX,dep:b.DEP,fin:b.FIN,otr:b.OTR,gop:b.COS+b.PLA+b.OPX,noi:rev-b.COS-b.PLA-b.OPX,gross,ebitda,net,opexTot:b.OPX+b.PLA,interes:g0(acc,"705001")+g0(acc,"701001")+g0(acc,"705002"),rent:-pref(acc,["401"])};
+  return {rev,cos:b.COS,pla:b.PLA,hos:g0(acc,CTA_HOSP),opx:b.OPX,dep:b.DEP,fin:b.FIN,otr:b.OTR,gop:b.COS+b.PLA+b.OPX,noi:rev-b.COS-b.PLA-b.OPX,gross,ebitda,net,opexTot:b.OPX+b.PLA,interes:g0(acc,"705001")+g0(acc,"701001")+g0(acc,"705002"),rent:-pref(acc,["401"])};
 }
 function metrics(e,mode){
   mode=mode||S.mode;
@@ -1849,7 +1864,7 @@ function renderMain(){
       case "Ingresos por alquiler":return ex(nombre+" · "+per,"Suma de las cuentas 401 (alquileres) de los balances de comprobación"+(i?" (saldo acumulado del año)":" (movimiento del mes: créditos − débitos)")+".",det("rent",mo,PLP.rent),m.rent);
       case "Otros ingresos":return ex(nombre+" · "+per,"Cuentas de ingreso 4xx distintas de alquileres (recargos, ingresos varios). Los ingresos por intereses (411001) van en gastos financieros.",det("otros",mo,PLP.otros),m.rev-m.rent);
       case "Ingresos operativos":return ex(nombre+" · "+per,`Ingresos por alquiler ${fmt(m.rent)} + otros ingresos ${fmt(m.rev-m.rent)}.`,[],m.rev);
-      case "Gastos operativos":return ex(nombre+" · "+per,`Costos de la propiedad ${fmt(m.cos)} + planilla ${fmt(m.pla)} + administración y otros ${fmt(m.opx)}. No incluye intereses ni depreciación.`,det("gop",mo,PLP.gop),m.gop);
+      case "Gastos operativos":return ex(nombre+" · "+per,`Costos de la propiedad ${fmt(m.cos)} + planilla ${fmt(m.pla-m.hos)}${Math.abs(m.hos)>=0.5?` + hospedaje y alimentación ${fmt(m.hos)}`:""} + administración y otros ${fmt(m.opx)}. No incluye intereses ni depreciación.`,det("gop",mo,PLP.gop),m.gop);
       case "NOI (resultado operativo neto)":return ex("NOI · "+per,`Ingresos operativos ${fmt(m.rev)} − gastos operativos ${fmt(m.gop)} = ${fmt(m.noi)}.`,multiE?es.map(e=>[e,metrics(e,mo).noi]).filter(x=>Math.abs(x[1])>=0.5).sort((a,b)=>b[1]-a[1]):[],m.noi);
       case "Margen NOI":return ex(nombre+" · "+per,`NOI ${fmt(m.noi)} ÷ ingresos operativos ${fmt(m.rev)} = ${pct(m.noiM)}.`,[],m.noiM,"%");
       case "Gastos financieros":return ex(nombre+" · "+per,"Cuentas 7xx: intereses de préstamos y bonos, comisiones bancarias; se restan los ingresos por intereses (411001).",det("fin",mo,PLP.fin),m.fin);
@@ -1974,7 +1989,8 @@ const RES_ROWS=[ // [concepto, valor, tipo (i=detalle, t=subtotal, k=resultado, 
   ["Otros ingresos",x=>x.rev-x.rent,"i",0,1],
   ["Ingresos operativos brutos",x=>x.rev,"t"],
   ["Costos de la propiedad",x=>-x.cos,"i"],
-  ["Planilla",x=>-x.pla,"i",0,1],
+  ["Planilla",x=>-(x.pla-x.hos),"i",0,1],
+  ["Hospedaje y alimentación",x=>-x.hos,"i",0,1],
   ["Administración y otros gastos",x=>-x.opx,"i"],
   ["Gastos operativos",x=>-x.gop,"t"],
   ["NOI",x=>x.noi,"k",1],
@@ -2064,9 +2080,38 @@ function renderVal(){
 // del grupo con balance en ese mes (CxC 103003 de quien prestó contra CxP 201003 de quien debe).
 // Pantera Real Estate (fuera de las sociedades con balance) y los préstamos de accionistas no se eliminan.
 function icSocDe(n,es){const k=nrm(String(n).replace(/\(.*?\)/g,""));return es.find(e=>e===n)||es.find(e=>e.startsWith(n+" ("))||es.find(e=>nrm(e.replace(/\(.*?\)/g,""))===k)||null;}
+// Líneas "Rel - X" de los auxiliares del mes: 103003 en CxC (X le debe a la sociedad) y 201003 en CxP (la sociedad le debe a X)
+function icAux(per){const o=[];(DS.AUX||[]).filter(a=>a.per===per).forEach(a=>a.cuentas.forEach(c=>{
+  const lado=a.tipo==="cxc"&&c.cuenta==="103003"?"cxc":a.tipo==="cxp"&&c.cuenta==="201003"?"cxp":null;if(!lado)return;
+  c.filas.forEach(f=>{const m=String(f.nombre||"").match(/^\s*rel(?:\.|\b)\s*[-–:]?\s*(.+)$/i);if(!m||Math.abs(+f.saldo||0)<0.005)return;
+    const otra=m[1].trim(),v=Math.abs(+f.saldo);o.push(lado==="cxc"?{deudor:otra,acreedor:a.soc,lado,monto:v}:{deudor:a.soc,acreedor:otra,lado,monto:v});});}));
+  return o;}
+// Saldos entre relacionadas del mes: detalle de compañías relacionadas + líneas "Rel" de los auxiliares.
+// Para cada pareja se compara lo que registra quien cobra (auxiliar CxC 103003) con lo que registra quien debe
+// (auxiliar CxP 201003 o, si no hay, el detalle). Se elimina el saldo mayor y la diferencia queda "por conciliar".
 function icRows(per){const es=BAL[per]?Object.keys(BAL[per]):[];
-  return (IC[per]||[]).map(f=>{const d=icSocDe(f.deudor,es),a=icSocDe(f.acreedor,es),interna=f.tipo==="relacionada"&&!!d&&!!a&&d!==a;
-    return {...f,dSoc:d,aSoc:a,interna,clase:interna?"Entre sociedades":f.tipo==="accionista"?"Accionista":"Holding u otra relacionada"};});}
+  const lim=n=>String(icSocDe(n,es)||n).replace(/\(.*?\)/g,""),kN=(d,a,t)=>nrm(lim(d))+"|"+nrm(lim(a))+"|"+t,M=new Map();
+  (IC[per]||[]).forEach(f=>M.set(kN(f.deudor,f.acreedor,f.tipo),{...f,det:f.monto,cxc:null,cxpAux:null}));
+  icAux(per).forEach(x=>{const k=kN(x.deudor,x.acreedor,"relacionada");let r=M.get(k);
+    if(!r){r={deudor:x.deudor.replace(/,?\s*(S\.?\s*A\.?|Inc\.?|Corp\.?)\s*$/i,""),acreedor:x.acreedor.replace(/,?\s*(S\.?\s*A\.?|Inc\.?|Corp\.?)\s*$/i,""),tipo:"relacionada",monto:0,det:null,cxc:null,cxpAux:null};M.set(k,r);}
+    if(x.lado==="cxc")r.cxc=(r.cxc||0)+x.monto;else r.cxpAux=(r.cxpAux||0)+x.monto;});
+  const auxDe=(soc,t)=>(DS.AUX||[]).some(a=>a.per===per&&a.soc===soc&&a.tipo===t),hayDet=!!(IC[per]||[]).length;
+  return [...M.values()].map(f=>{const d=icSocDe(f.deudor,es),a=icSocDe(f.acreedor,es),interna=f.tipo==="relacionada"&&!!d&&!!a&&d!==a;
+    let monto=f.det!=null?f.det:0,dif=0,nota="",fuente=f.det!=null?"Detalle de relacionadas":"";
+    if(f.tipo==="relacionada"){
+      const cxc=f.cxc!=null?f.cxc:(a&&auxDe(a,"cxc")?0:null),cxp=f.cxpAux!=null?f.cxpAux:f.det!=null?f.det:(d&&(auxDe(d,"cxp")||hayDet)?0:null);
+      monto=Math.max(cxc||0,cxp||0);
+      fuente=[f.cxc!=null?"auxiliar CxC de "+(a||f.acreedor):"",f.cxpAux!=null?"auxiliar CxP de "+(d||f.deudor):f.det!=null?"detalle de relacionadas":""].filter(Boolean).join(" · ");
+      if(interna&&cxc!=null&&cxp!=null&&Math.abs(cxc-cxp)>=0.5){dif=cxc-cxp;nota=`${a} registra por cobrar ${fmt(cxc)}; ${d} registra por pagar ${fmt(cxp)} (diferencia ${fmt(Math.abs(dif))}).`;}}
+    // Pareja de sociedades del grupo donde una todavía no tiene balance del mes: se elimina cuando se cargue
+    let clase=interna?"Entre sociedades":f.tipo==="accionista"?"Accionista":"Holding u otra relacionada";
+    if(!interna&&f.tipo==="relacionada"){const gD=d||icGrupo(f.deudor),gA=a||icGrupo(f.acreedor);
+      if(gD&&gA&&gD!==gA){clase="Entre sociedades";const falta=[d?null:gD,a?null:gA].filter(Boolean).join(" y ");
+        nota=`Se eliminará cuando se cargue el balance de ${falta} de ${PERIODS[per]?PERIODS[per].label.toLowerCase():per}.`+(nota?" "+nota:"");}}
+    return {...f,monto:r2c(monto),dSoc:d,aSoc:a,interna,dif,nota,fuente,clase};}).filter(r=>r.monto>=0.005);}
+// Nombre de sociedad del grupo (catálogo) aunque no tenga balance en el mes
+function icGrupo(n){const k=PanteraParse.nrm(n);const x=PanteraParse.CATALOGO.SOCIEDADES.find(([,re])=>re.test(k));return x?x[0]:null;}
+const r2c=v=>Math.round(v*100)/100;
 // Eliminaciones para las sociedades seleccionadas (solo cuando hay más de una)
 function elimDe(per){const sel=new Set(selEnts());const E={tot:0,cxc:{},cxp:{},filas:[]};if(sel.size<2||!per)return E;
   icRows(per).forEach(r=>{if(!r.interna||!sel.has(r.dSoc)||!sel.has(r.aSoc))return;E.tot+=r.monto;E.cxc[r.aSoc]=(E.cxc[r.aSoc]||0)+r.monto;E.cxp[r.dSoc]=(E.cxp[r.dSoc]||0)+r.monto;E.filas.push(r);});
@@ -2084,11 +2129,11 @@ function icTabla(){const per=S.period,sel=new Set(selEnts());
   const saldo=(e,c)=>{const v=((BAL[per]||{})[e]||{})[c];return v?v[3]:0;};
   const no=new Set([...Object.entries(cxcB).filter(([e,v])=>saldo(e,"103003")<v-0.5).map(([e])=>e),...Object.entries(cxpB).filter(([e,v])=>-saldo(e,"201003")<v-0.5).map(([e])=>e)]);
   const L=R.map(r=>({deb:r.dSoc||r.deudor,acr:r.aSoc||r.acreedor,clase:r.clase,monto:r.monto,el:elim.has(kIC(r))?-r.monto:0,
-      chk:r.interna&&(no.has(r.aSoc)||no.has(r.dSoc))}))
+      chk:r.interna&&(Math.abs(r.dif)>=0.5||no.has(r.aSoc)||no.has(r.dSoc)),nota:r.nota,fuente:r.fuente}))
     .sort((a,b)=>(a.clase==="Entre sociedades"?0:1)-(b.clase==="Entre sociedades"?0:1)||b.monto-a.monto);
   const T=sumRows(L,["monto","el"]);
-  return tbl([["Debe (CxP relacionada)","deb",(x,r)=>`<b style="font-weight:600">${escH(x)}</b>${r.chk?'<span class="tag warn">por conciliar</span>':""}`],
-    ["Le deben (CxC relacionada)","acr",x=>escH(x),"l","l"],["Tipo","clase",x=>`<span class="tag" style="margin-left:0">${x}</span>`,"l","l"],
+  return tbl([["Debe (CxP relacionada)","deb",(x,r)=>`<b style="font-weight:600">${escH(x)}</b>${r.chk?`<span class="tag warn" title="${escH(r.nota||"El saldo no coincide con las cuentas 103003 / 201003 del balance.")}">por conciliar</span>`:""}${r.nota?`<div class="tm" style="white-space:normal;max-width:340px;font-size:11.5px">${escH(r.nota)}</div>`:""}`],
+    ["Le deben (CxC relacionada)","acr",x=>escH(x),"l","l"],["Tipo","clase",(x,r)=>`<span class="tag" style="margin-left:0"${r.fuente?` title="Fuente: ${escH(r.fuente)}"`:""}>${x}</span>`,"l","l"],
     ["Saldo","monto",fmt,"key"],["Eliminación","el",x=>Math.abs(x)<0.5?dash:fmt(x)]],L,L.length>1?T:null);}
 
 // ======================= BALANCE GENERAL =======================
@@ -2174,6 +2219,7 @@ function renderBG(){
 function render(){
   const p=PERIODS[S.period];
   const FUND=["port","crec","carga","hist","usr"].includes(S.view);
+  {const nc=document.getElementById("notaConsol");if(nc)nc.hidden=!p||!p.has||["carga","hist","usr"].includes(S.view)||(!FUND&&S.entity!=="__ALL__");}
   document.querySelector(".filters").classList.toggle("fund",FUND);
   if(!p&&!FUND&&PUEDE_EDITAR){setView("carga");return;}
   if(!p){document.getElementById("hdrSub").textContent=HAY_DATOS?"Sin balances cargados":"Sin datos · carga los archivos del mes";["main","res","anio","val","detalle","port","crec","carga","hist","usr"].forEach(x=>document.getElementById("v-"+x).hidden=x!==S.view);document.getElementById("v-pend").hidden=true;
@@ -2408,7 +2454,7 @@ function guardarYRecargar(D,msg){
 }
 async function aplicarCarga(){if(!PEND_DS||!PUEDE_EDITAR)return;
   const b=document.getElementById("btnAplicar");b.disabled=true;b.dataset.t=b.innerHTML;b.textContent="Guardando en Supabase…";
-  try{const ok=PEND_LOG.filter(r=>r.ok);await sbGuardar(SB(),PEND_DS,PEND_LOG,`${ok.length} archivos: `+ok.map(x=>x.archivo).join(", ").slice(0,900),resumenCtl(PEND_DS),c=>BUCKET_LABEL[bucket(c)]);}
+  try{const ok=PEND_LOG.filter(r=>r.ok);await sbGuardar(SB(),PEND_DS,PEND_LOG,`${ok.length} archivos: `+ok.map(x=>x.archivo).join(", ").slice(0,900),resumenCtl(PEND_DS),c=>grupoCta(c));}
   catch(err){b.disabled=false;b.innerHTML=b.dataset.t;alert("No se pudo guardar en Supabase: "+err.message);return;}
   guardarYRecargar(null,"Dashboard actualizado con los archivos cargados y guardado en Supabase.");}
 async function quitarMes(){if(!ES_ADMIN)return;const k=document.getElementById("selQuitar").value;
@@ -2590,7 +2636,7 @@ function hojaTablero(L,sub){
 // Definición de las hojas de datos de origen (se usa al exportar y en el selector de columnas)
 function defDatos(add){
     const M='"$"#,##0.00;-"$"#,##0.00',P='0.00%;-0.00%',N2='#,##0.00;-#,##0.00';
-    const BR=[];Object.keys(DS.BAL||{}).sort().forEach(k=>Object.entries(DS.BAL[k]).forEach(([e,acc])=>Object.entries(acc).sort().forEach(([c,v])=>BR.push({per:k,e,c,n:NAMES[c]||FILE_NAMES[c]||"",g:BUCKET_LABEL[bucket(c)],v}))));
+    const BR=[];Object.keys(DS.BAL||{}).sort().forEach(k=>Object.entries(DS.BAL[k]).forEach(([e,acc])=>Object.entries(acc).sort().forEach(([c,v])=>BR.push({per:k,e,c,n:NAMES[c]||FILE_NAMES[c]||"",g:grupoCta(c),v}))));
     add("Datos · Balances","Balances de comprobación",BR,[["Mes","per"],["Sociedad","e"],["Cuenta","c"],["Nombre de la cuenta","n"],["Grupo","g"],["Saldo inicial",r=>r.v[0],M,1],["Débito",r=>r.v[1],M,1],["Crédito",r=>r.v[2],M,1],["Saldo final",r=>r.v[3],M,1]]);
     add("Datos · Propiedades","Propiedades valuadas",PROPS,[["Propiedad","prop"],["Línea de valuación","src"],["Sociedad dueña",r=>(r.own||[]).find(o=>ents().includes(o))||(r.own||[])[0]],["Área m²","area",N2,1],["Valor/m² anterior","vm2",M],["Valor/m² nuevo","vm2_new",M],["Ajuste %","ajuste",P],["Valor de mercado","ev",M,1],["Deuda","deuda",M,1],["NAV","nav",M,1],["Fee 0.80%","fee",M,1],["Renta mensual","renta",M,1],["Renta/m²","rm2",M],["Cap rate anterior","cap",P],["Cap rate nuevo","cap_new",P],["Participación","part",P],["Valor Addepar","addepar",M,1],["Valor Sonoma","sonoma",M,1],["Δ Equity","dEq",M,1],["Nota","flag"]]);
     const RS=(DS.VAL_RAW&&DS.VAL_RAW.resumen)||{};
