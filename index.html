@@ -1543,8 +1543,9 @@ const PERIODS=(function(){
   const ks=Object.keys(BAL).filter(k=>Object.keys(BAL[k]).length).sort(), P={};
   if(!ks.length) return P;
   const last=ks[ks.length-1], y=+last.slice(0,4), m=+last.slice(5,7);
-  // Todos los meses de cada año con datos (el año más reciente, hasta su último mes)
-  const all=new Set(ks); [...new Set(ks.map(k=>+k.slice(0,4)))].forEach(yy=>{const top=yy===y?m:12;for(let i=1;i<=top;i++) all.add(yy+"-"+String(i).padStart(2,"0"));});
+  // Meses desde el primer mes con balances hasta el último. Los meses anteriores a la primera carga no se muestran
+  // (aparecen solo si se suben sus documentos); un mes sin balances entre dos cargados sale como "pendiente".
+  const all=new Set(ks);{let yy=+ks[0].slice(0,4),mm=+ks[0].slice(5,7);while(yy<y||(yy===y&&mm<=m)){all.add(yy+"-"+String(mm).padStart(2,"0"));if(++mm>12){mm=1;yy++;}}}
   [...all].sort().forEach(k=>{const yy=+k.slice(0,4),mm=+k.slice(5,7),y2=String(yy).slice(2),d=new Date(yy,mm,0).getDate();
     P[k]={label:MESES[mm-1]+" "+yy,short:MC[mm-1]+"-"+y2,close:d+"-"+MC[mm-1]+"-"+y2,n:mm,has:!!(BAL[k]&&Object.keys(BAL[k]).length)};});
   return P;})();
@@ -2815,7 +2816,8 @@ function renderAnio(){
     kpi("NOI acumulado",fmtK(Y.noi),`<span class="${signCls(Y.noi)}">Margen ${pct(Y.noiM)}</span>`,signCls(Y.noi)),
     kpi("Utilidad neta acumulada",fmtK(Y.net),`<span class="${signCls(Y.net)}">Margen ${pct(Y.netM)}</span>`,signCls(Y.net)),
     kpi("Ingreso promedio mensual",fmtK(Y.rev/ultimoN),`${ultimoN} ${ultimoN===1?"mes":"meses"} transcurridos`),
-    kpi("Meses con balance",`${con.length} de ${ultimoN||ks.length}`,con.length<ultimoN?`<span class="sb">Faltan: ${D.filter(x=>!x.d&&x.n<=ultimoN).map(x=>MC[x.n-1]).join(", ")}</span>`:"Año completo hasta "+(last?MESES[ultimoN-1].toLowerCase():""),con.length<ultimoN?"sb":"")].join(""):"";
+    (()=>{const esp=D.filter(x=>x.n<=ultimoN),fal=esp.filter(x=>!x.d),ini=esp.length?esp[0].n:1;
+      return kpi("Meses con balance",`${con.length} de ${esp.length||ks.length}`,fal.length?`<span class="sb">Faltan: ${fal.map(x=>MC[x.n-1]).join(", ")}</span>`:(ini>1?`Completo de ${MC[ini-1]} a ${MC[ultimoN-1]}`:"Año completo hasta "+(last?MESES[ultimoN-1].toLowerCase():"")),fal.length?"sb":"");})()].join(""):"";
   // Gráfico mensual
   const meses=D.filter(x=>x.n<=Math.max(ultimoN,1));
   legend("lgAnio",RES_SER.map(s=>[s[1],css(s[2])]));
