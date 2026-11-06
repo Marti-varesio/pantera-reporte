@@ -204,6 +204,7 @@ table.dt tr.sec-row td{letter-spacing:.08em}
 .exec-t td.neg{color:var(--bad)}
 .exec-t td[data-exp],.kpi-val[data-exp]{cursor:help;text-decoration:underline dotted color-mix(in srgb,var(--muted) 60%,transparent);text-underline-offset:4px}
 .exec-t td[data-exp]:hover,.kpi-val[data-exp]:hover{color:var(--brand)}
+@media (min-width:1024px){.res6{grid-template-columns:repeat(6,minmax(0,1fr))}}
 .exp-pop{position:absolute;z-index:95;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 14px 36px rgba(15,28,46,.22);padding:12px 14px;width:min(420px,92vw);font-size:12.5px;line-height:1.45}
 .exp-t{font-weight:700;font-size:13px;margin-bottom:4px}.exp-f{color:var(--text-2)}
 .exp-tab{width:100%;border-collapse:collapse;margin-top:8px;font-variant-numeric:tabular-nums}
@@ -532,7 +533,7 @@ td.ir-hlc,th.ir-hlc{background:color-mix(in srgb,var(--brand-2) 13%,transparent)
 
   <!-- ======================= RESULTADOS ======================= -->
   <section id="v-res" hidden>
-    <div id="resKpis" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-4"></div>
+    <div id="resKpis" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-4 res6"></div>
     <div class="card p-4">
       <div class="flex flex-wrap justify-between items-end gap-2 mb-3">
         <h3 id="resTitle"></h3>
@@ -540,6 +541,12 @@ td.ir-hlc,th.ir-hlc{background:color-mix(in srgb,var(--brand-2) 13%,transparent)
       </div>
       <div class="chart-box" style="height:320px"><canvas id="cRes"></canvas></div>
       <div class="scroll-x mt-5"><table class="dt num" id="tRes"></table></div>
+    </div>
+    <div class="card p-4 mt-4" id="divAnio">
+      <div class="flex flex-wrap justify-between items-end gap-2 mb-3"><h3 id="divAnioTitle">Dividendos pagados en el año</h3><div class="tm" id="divAnioSub" style="font-size:12.5px"></div></div>
+      <div class="scroll-x"><table class="dt num" id="tDivAnio"></table></div>
+      <div id="divAnioDet" class="mt-4"></div>
+      <div class="note" id="divAnioNote"></div>
     </div>
   </section>
 
@@ -808,6 +815,7 @@ function detectar(wb,nombre){
   const txt=s=>s.M.slice(0,15).flat().filter(v=>v!=null).map(String).join(" | ");
   for(const s of sheets){
     const t=txt(s), tn=nrm(t);
+    if(/fecha de contabilizaci/i.test(t)&&/contrapartida/i.test(t)&&/dividend/i.test(t+" "+(nombre||"")))return {tipo:"dividendos",hoja:s.n};
     if(/entre\s+compa/.test(tn)&&/por pagar|por cobrar|le debe/.test(tn))return {tipo:"intercompanias",hoja:s.n};
     if(/auxiliar de cuentas por (pagar|cobrar)|antig[uü]edad de saldos/i.test(t))return {tipo:"auxiliar",hoja:s.n};
     if(/saldo inicial|saldo final/i.test(t)&&/d[eé]bito/i.test(t)&&/cr[eé]dito/i.test(t)&&/\b\d{6}\s*-/.test(t))return {tipo:"balance",hoja:s.n};
@@ -1188,6 +1196,41 @@ function nuevoDataset(){return {IC:{},AUX:[],BAL:{},FILE_NAMES:{},PROPS:[],CLIEN
 function serializarLease(L){return L.map(([re,so,f,m2])=>[re.source,so,f,m2]);}
 function hidratarLease(L){return (L||[]).map(([s,so,f,m2])=>[s instanceof RegExp?s:new RegExp(s,"i"),so,f,m2]);}
 
+// ---------- Mayor general de dividendos por pagar (cuenta 205004) ----------
+// Export de SAP, una fila por asiento: Fecha | Nº trans. | Origen | … | Débito | Crédito | … | Sucursal.
+// Débito = pago a accionistas (neto); crédito contra 305002 = dividendo declarado; asientos de fusión = traspaso entre sucursales (no cuentan).
+const DIV_SOC=[[/^galeras? cde/,"Galeras CDE"],[/^capital cde/,"Capital CDE"],[/^caracal/,"Caracal"],[/^oficinas del este/,"Oficinas del Este"],[/^romanei/,"Romanei"],[/^deltacat/,"Deltacat"],[/^puma/,"Puma Panamá Norte"],[/^yaguarundi/,"Yaguarundi"]];
+function leerMayorDividendos(wb,hoja){
+  const M=hojaMatriz(wb.Sheets[hoja]);
+  const low=v=>String(v==null?"":v).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim();
+  let hr=-1;for(let r=0;r<Math.min(M.length,15);r++)if((M[r]||[]).some(v=>/fecha de contabilizaci/.test(low(v)))){hr=r;break;}
+  if(hr<0)throw new Error("No se encontró el encabezado \"Fecha de contabilización\"");
+  const H=M[hr].map(low),col=re=>H.findIndex(x=>re.test(x));
+  const cF=col(/^fecha/),cT=col(/trans/),cO=col(/^origen/),cI=col(/^info/),cR=col(/^referencia/),cD=col(/^debito/),cK=col(/^credito/),cS=col(/^sucursal/);
+  if(cF<0||cD<0||cK<0||cS<0)throw new Error("Faltan columnas (Fecha, Débito, Crédito o Sucursal)");
+  // SAP exporta dd/mm/aaaa como texto y Excel convierte a fecha las que tienen día ≤ 12 leyéndolas como mm/dd:
+  // si en el archivo hay fechas de texto con día > 12, las celdas de fecha vienen con día y mes invertidos.
+  const rx=/^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/;
+  const diaPrimero=M.slice(hr+1).some(r=>{const m=rx.exec(String((r||[])[cF]==null?"":r[cF]));return !!m&&+m[1]>12;});
+  const fecha=v=>{if(v==null||v==="")return "";let y,m,d;
+    if(typeof v==="number"||v instanceof Date){if(typeof v==="number"){const o=XLSXlib().SSF.parse_date_code(v);if(!o)return "";y=o.y;m=o.m;d=o.d;}else{y=v.getFullYear();m=v.getMonth()+1;d=v.getDate();}
+      if(diaPrimero&&d<=12){const t=m;m=d;d=t;}}
+    else{const x=rx.exec(String(v));if(!x)return "";d=+x[1];m=+x[2];y=+x[3];}
+    return y+"-"+pad2(m)+"-"+pad2(d);};
+  const socDe=s=>{const n=nrm(s);for(const[re,nom]of DIV_SOC)if(re.test(n))return nom;return sociedadDe(s);};
+  const filas=[],omit=new Set();let traspasos=0;
+  for(let r=hr+1;r<M.length;r++){const R=M[r]||[];const f=fecha(R[cF]);if(!f)continue;
+    const suc=clean(R[cS]);if(!suc)continue;const deb=num(R[cD])||0,cre=num(R[cK])||0;if(Math.abs(deb)<0.005&&Math.abs(cre)<0.005)continue;
+    const info=clean(cI>=0?R[cI]:""),ref=clean(cR>=0?R[cR]:"");
+    if(/fusi[oó]n|^acf\b|^sf\b|saldo final|asiento cierre/i.test(info+" | "+ref)){traspasos++;continue;}
+    if(fueraDeAlcance(suc)){omit.add(titleCase(suc.replace(/,?\s*S\.?\s*A\.?\s*$/i,"")));continue;}
+    const tipo=deb>0?"pago":"declarado";
+    filas.push({f,soc:socDe(suc),acc:tipo==="pago"?ref:"",info,trans:clean(cT>=0?R[cT]:""),org:clean(cO>=0?R[cO]:""),tipo,monto:r2(deb>0?deb:cre)});}
+  if(!filas.length)throw new Error("No se encontraron movimientos de dividendos");
+  filas.sort((a,b)=>a.f.localeCompare(b.f)||String(a.trans).localeCompare(String(b.trans)));
+  return {filas,omit:[...omit],traspasos};
+}
+
 // Procesa un workbook ya abierto y lo integra en el dataset. Devuelve el registro para la bitácora.
 function integrar(D,wb,nombre){
   const det=detectar(wb,nombre);const reg={archivo:nombre,tipo:det.tipo,detalle:"",ok:true};
@@ -1213,6 +1256,9 @@ function integrar(D,wb,nombre){
       reg.detalle=`${x.per} · ${x.filas.length} saldos · ${n} entre sociedades del grupo`;}
     else if(det.tipo==="inquilinos"){const q=leerInquilinos(wb,det.hoja,nombre);if(!q.per)throw new Error("No se pudo determinar el mes del informe");if(!q.soc)throw new Error("No se identificó la sociedad en el nombre del archivo");if(fueraDeAlcance(q.soc))throw errFuera(q.soc);
       D.INQ=D.INQ.filter(x=>!(x.soc===q.soc&&x.per===q.per));D.INQ.push(q);reg.sociedad=q.soc;reg.periodo=q.per;reg.detalle=`${q.soc} · ${q.per} · ${q.u.length} unidades`;}
+    else if(det.tipo==="dividendos"){const x=leerMayorDividendos(wb,det.hoja);D.DIVM={archivo:nombre,filas:x.filas};
+      const P=x.filas.filter(f=>f.tipo==="pago"),tot=P.reduce((t,f)=>t+f.monto,0),ult=x.filas[x.filas.length-1].f;
+      reg.detalle=`${P.length} pagos de dividendos por $${Math.round(tot).toLocaleString("en-US")} y ${x.filas.length-P.length} declaraciones, hasta el ${ult}`+(x.omit.length?` · se omite ${x.omit.join(", ")} (fuera del reporte)`:"")+(x.traspasos?` · ${x.traspasos} asientos de fusión no cuentan`:"");}
     else{reg.ok=false;reg.detalle="No se reconoció el tipo de reporte; se omite.";}
   }catch(e){reg.ok=false;reg.detalle=(e.fuera?"":"Error: ")+e.message;}
   D.archivos=D.archivos.filter(a=>a.archivo!==nombre);D.archivos.push(reg);
@@ -1283,7 +1329,7 @@ try { if (String(window.name).startsWith("PANTERA_DS:")) window.name = ""; } cat
 // ======================= SUPABASE: guardar y leer la información por año y mes =======================
 // Funciona en el navegador (cliente supabase-js) y en pruebas (cliente simulado). Las funciones puras
 // sbFilas* y sbArmarDS no dependen del navegador.
-const SB_DOC_TIPOS=["valuacion","fee_anterior","clientes","clientes_base","dataroom","deuda"];
+const SB_DOC_TIPOS=["valuacion","fee_anterior","clientes","clientes_base","dataroom","deuda","dividendos"];
 const sbAM=per=>({anio:+per.slice(0,4),mes:+per.slice(5,7)});
 const sbPer=(a,m)=>`${a}-${String(m).padStart(2,"0")}`;
 const sbFecha=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||"")?s:null;
@@ -1295,7 +1341,8 @@ const SB_DOC={
   clientes:{de:D=>(D.CLIENTES_CANON||[]).length?{CLIENTES_CANON:D.CLIENTES_CANON}:null,fecha:()=>null,a:(D,c)=>{D.CLIENTES_CANON=c.CLIENTES_CANON;}},
   clientes_base:{de:D=>(D.CLIENTES_BASE||[]).length?{CLIENTES_BASE:D.CLIENTES_BASE}:null,fecha:()=>null,a:(D,c)=>{D.CLIENTES_BASE=c.CLIENTES_BASE;}},
   dataroom:{de:D=>D.DATAROOM?{DATAROOM:D.DATAROOM,LEASE_RAW:D.LEASE_RAW}:null,fecha:()=>null,a:(D,c)=>{D.DATAROOM=c.DATAROOM;D.LEASE_RAW=c.LEASE_RAW;}},
-  deuda:{de:D=>(D.DEBT_RAW||[]).length?{DEBT_RAW:D.DEBT_RAW,DEBT_TOT:D.DEBT_TOT||{}}:null,fecha:()=>null,a:(D,c)=>{D.DEBT_RAW=c.DEBT_RAW;D.DEBT_TOT=c.DEBT_TOT;}}
+  deuda:{de:D=>(D.DEBT_RAW||[]).length?{DEBT_RAW:D.DEBT_RAW,DEBT_TOT:D.DEBT_TOT||{}}:null,fecha:()=>null,a:(D,c)=>{D.DEBT_RAW=c.DEBT_RAW;D.DEBT_TOT=c.DEBT_TOT;}},
+  dividendos:{de:D=>D.DIVM&&(D.DIVM.filas||[]).length?{DIVM:D.DIVM}:null,fecha:D=>D.DIVM&&D.DIVM.filas.length?D.DIVM.filas[D.DIVM.filas.length-1].f:null,a:(D,c)=>{D.DIVM=c.DIVM;}}
 };
 
 // Filas a escribir para una carga: solo lo que cambió (según la bitácora de la carga)
@@ -1399,6 +1446,7 @@ async function sbGuardar(cli, D, log, resumen, ctl, bucketLabel) {
     pantera_inquilinos_resumen: F.inqResumen, pantera_documentos: F.documentos, pantera_archivos: F.archivos } };
   if (F.intercompanias.length) p.insertar.pantera_intercompanias = F.intercompanias;
   const { data, error } = await cli.rpc("pantera_guardar_carga", { p });
+  if (error && /pantera_documentos_tipo_check/.test(error.message)) throw new Error("La base de Supabase todavía no acepta el mayor de dividendos: corre pantera_supabase_dividendos_2026-11-06.sql en el SQL Editor y vuelve a aplicar.");
   if (error) throw new Error(/pantera_intercompanias/.test(error.message) ? "La base de Supabase no tiene todavía la tabla de saldos entre compañías: corre de nuevo pantera_supabase.sql en el SQL Editor y vuelve a aplicar." : error.message);
   return { carga: data.carga, creado_en: data.creado_en, F };
 }
@@ -1524,6 +1572,7 @@ const FILE_NAMES=DS.FILE_NAMES||{};
 const GENERADO=DS.GENERADO||"";
 const CLIENTES=DS.CLIENTES||[];
 const DIVS=DS.DIVS||[];
+const DIVM=DS.DIVM&&(DS.DIVM.filas||[]).length?DS.DIVM:null; // mayor general 205004 (pagos y declaraciones del año)
 const INQ=DS.INQ||[];
 const IC=DS.IC||{};
 const NAMES=Object.assign({},FILE_NAMES,BASE_NAMES);
@@ -2003,12 +2052,16 @@ const RES_ROWS=[ // [concepto, valor, tipo (i=detalle, t=subtotal, k=resultado, 
   ["Margen neto",x=>x.netM,"p",1]];
 function renderRes(){
   const m=metrics(S.entity),p=PERIODS[S.period],per=S.mode==="mes"?p.label:"Enero – "+p.label;
+  const DV=divAnio(),DVt=DV.pagos.reduce((t,f)=>t+f.monto,0);
   document.getElementById("resKpis").innerHTML=[
     kpi("Ingresos operativos",fmtK(m.rev),S.mode==="mes"?fmtK(m.rev*12)+" anualizado":"Acumulado ene–"+p.short),
     kpi("Gastos operativos",fmtK(m.gop),m.rev?pct(m.gop/m.rev)+" de los ingresos":null),
     kpi("NOI",fmtK(m.noi),`<span class="${signCls(m.noi)}">Margen ${pct(m.noiM)}</span>`,signCls(m.noi)),
     kpi("Intereses",fmtK(m.interes),m.cov!=null?`<span class="${m.cov>=1.5?"sg":"sb"}">NOI / intereses: ${x2(m.cov)}</span>`:null),
-    kpi("Utilidad neta",fmtK(m.net),`<span class="${signCls(m.net)}">Margen ${pct(m.netM)}</span>`,signCls(m.net))].join("");
+    kpi("Utilidad neta",fmtK(m.net),`<span class="${signCls(m.net)}">Margen ${pct(m.netM)}</span>`,signCls(m.net)),
+    kpi("Dividendos pagados en el año",fmtK(DVt),DV.pagos.length?`ene–${p.short} · ${DV.pagos.length} pago${DV.pagos.length===1?"":"s"}`:"Sin pagos en el año")].join("");
+  {const kv=document.querySelector("#resKpis > .card:last-child .kpi-val");if(kv){kv.dataset.exp="divAnio";kv.tabIndex=0;}}
+  renderDivAnio(DV,DVt,p);
   const es=selEnts().map(e=>[e,metrics(e)]).sort((a,b)=>b[1].rev-a[1].rev);
   document.getElementById("resTitle").textContent=(es.length>1?"Resultados por sociedad":"Resultados · "+S.entity)+" · "+per;
   legend("lgRes",RES_SER.map(s=>[s[1],css(s[2])]));
@@ -2023,6 +2076,57 @@ function renderRes(){
     rows.map(([l,f,t,sem])=>`<tr class="${t==="t"?"sub":t==="k"?"tot":""}"><td class="${t==="i"?"ind t2":""}">${l}</td>`+ms.map((x,i)=>{const v=f(x);
       const cls=[t==="p"?(sem?"pcs":"pc"):"",multi&&i===last?"key":"",sem?signCls(v):""].filter(Boolean).join(" ");
       return `<td${cls?` class="${cls}"`:""}>${t==="p"?pct(v):Math.abs(v)<0.5?dash:fmt(v)}</td>`;}).join("")+"</tr>").join("")+"</tbody>";
+}
+
+// ======================= DIVIDENDOS PAGADOS EN EL AÑO =======================
+// Fuente: mayor general de la cuenta 205004 (carpeta del mes, "Mayor General_Dividendos por pagar <año>.xlsx").
+// Sin ese archivo se usan los débitos a 205004 de los meses con balance cargado.
+const DIV_FUS=/^(galeras? cde|capital cde|caracal|oficinas del este|romanei|puma|deltacat|yaguarundi)/;
+function divEnt(soc,es){if(es.includes(soc))return soc;if(DIV_FUS.test(nrm(soc)))return es.find(e=>/^Bobcat/.test(e))||"Bobcat (Fusión)";return cliSoc(soc,es)||soc;}
+const mesCorto=f=>MC[+f.slice(5,7)-1]+"-"+f.slice(2,4);
+function divAnio(){const y=S.period.slice(0,4),fin=perEnd(),es=ents(),sel=new Set(selEnts()),todo=S.entity==="__ALL__"&&!S.sel;
+  if(DIVM){const F=DIVM.filas.filter(f=>f.f.slice(0,4)===y&&f.f<=fin).map(f=>({...f,ent:divEnt(f.soc,es)})).filter(f=>todo||sel.has(f.ent));
+    return {fuente:"mayor",archivo:DIVM.archivo,pagos:F.filter(f=>f.tipo==="pago"),decl:F.filter(f=>f.tipo==="declarado")};}
+  const pagos=[];
+  Object.keys(PERIODS).filter(k=>k.startsWith(y)&&k<=S.period&&PERIODS[k].has).forEach(k=>inPeriod(k,()=>{const ee=ents();selEnts().filter(e=>ee.includes(e)).forEach(e=>{
+    const v=(rows4(e)["205004"]||[0,0])[1];if(Math.abs(v)>=0.5)pagos.push({f:k+"-"+String(new Date(+k.slice(0,4),+k.slice(5,7),0).getDate()),soc:e,ent:e,acc:"",info:"Débitos del mes a la cuenta 205004",tipo:"pago",monto:v});});}));
+  return {fuente:"balances",pagos,decl:[]};}
+function renderDivAnio(DV,tot,p){
+  const box=document.getElementById("tDivAnio");if(!box)return;
+  window.EXPL=window.EXPL||{};
+  const y=S.period.slice(0,4),nM=+S.period.slice(5,7),meses=Array.from({length:nM},(_,i)=>y+"-"+String(i+1).padStart(2,"0"));
+  const enBob=f=>f.ent!==f.soc&&/^Bobcat/.test(f.ent);
+  // Por sociedad y mes
+  const G={};DV.pagos.forEach(f=>{const k=f.soc,g=G[k]=G[k]||{soc:k,bob:enBob(f),tot:0,m:{}};const mk=f.f.slice(0,7);(g.m[mk]=g.m[mk]||[]).push(f);g.tot+=f.monto;});
+  const socs=Object.values(G).sort((a,b)=>b.tot-a.tot);
+  const sumF=a=>(a||[]).reduce((t,f)=>t+f.monto,0);
+  const lin=a=>a.map(f=>[`${fDt(f.f)} · ${f.acc||"sin accionista"}`,f.monto]);
+  const formula=DV.fuente==="mayor"?"Pagos a accionistas registrados en la cuenta 205004 (dividendos por pagar), según el mayor general. Montos netos; el impuesto va en la 203008.":"Débitos a la cuenta 205004 de los meses con balance cargado. Falta el mayor de dividendos para cubrir los meses sin balance.";
+  // Explicación de la tarjeta: cada pago por sociedad y mes
+  const porSM={};DV.pagos.forEach(f=>{const k=f.f.slice(0,7)+"|"+f.soc;porSM[k]=(porSM[k]||0)+f.monto;});
+  EXPL.divAnio={titulo:"Dividendos pagados en el año · ene–"+p.short,formula:formula+" Clic en la tarjeta para ver el cuadro por sociedad y mes.",
+    lineas:Object.entries(porSM).sort((a,b)=>a[0].localeCompare(b[0])||b[1]-a[1]).map(([k,v])=>{const[mk,s]=k.split("|");return [mesCorto(mk)+" · "+s+(socs.find(g=>g.soc===s&&g.bob)?" (Bobcat)":""),v];}),total:tot,max:40};
+  document.getElementById("divAnioTitle").textContent="Dividendos pagados en el año · enero – "+p.label;
+  document.getElementById("divAnioSub").innerHTML=DV.pagos.length?`Total <b data-exp="divAnio" tabindex="0" style="font-weight:650;color:var(--text)">${fmt(tot)}</b> · ${DV.pagos.length} pagos`:"";
+  if(!DV.pagos.length){box.innerHTML="";document.getElementById("divAnioDet").innerHTML=`<div class="empty"><b style="color:var(--text)">Sin pagos de dividendos</b> de enero a ${p.label.toLowerCase()}.</div>`;document.getElementById("divAnioNote").innerHTML="";return;}
+  const td=(v,k)=>Math.abs(v)<0.5?`<td><span class="tm">—</span></td>`:`<td data-t="n" data-v="${v}" data-z="$#,##0;-$#,##0"${k?` data-exp="${k}" tabindex="0"`:""}>${fmt(v)}</td>`;
+  const totM=meses.map(mk=>DV.pagos.filter(f=>f.f.startsWith(mk)));
+  box.innerHTML=`<thead><tr><th>Sociedad</th>${meses.map(mk=>`<th>${mesCorto(mk)}</th>`).join("")}<th>Total</th></tr></thead><tbody>`+
+    socs.map((g,i)=>`<tr><td>${escH(g.soc)}${g.bob?'<span class="tag" title="Sociedad fusionada en Bobcat (Fusión)">Bobcat</span>':""}</td>`+meses.map((mk,j)=>{const a=g.m[mk];if(!a)return td(0);
+      const k="dv"+i+"_"+j;EXPL[k]={titulo:`${g.soc} · ${mesCorto(mk)}`,formula:"Pagos de dividendos del mes (cuenta 205004).",lineas:lin(a),total:sumF(a)};return td(sumF(a),k);}).join("")+
+      (()=>{const k="dvt"+i;EXPL[k]={titulo:`${g.soc} · ene–${p.short}`,formula:"Pagos de dividendos del año.",lineas:lin(Object.values(g.m).flat().sort((a,b)=>a.f.localeCompare(b.f))),total:g.tot};return `<td class="key" data-t="n" data-v="${g.tot}" data-exp="${k}" tabindex="0">${fmt(g.tot)}</td>`;})()+"</tr>").join("")+
+    `<tr class="tot"><td>Total</td>${totM.map((a,j)=>{if(!a.length)return td(0);const k="dvm"+j;EXPL[k]={titulo:`Total · ${mesCorto(meses[j])}`,formula:"Pagos de dividendos del mes, todas las sociedades.",lineas:a.map(f=>[`${fDt(f.f)} · ${f.soc}`,f.monto]),total:sumF(a)};return td(sumF(a),k);}).join("")}<td class="key" data-t="n" data-v="${tot}" data-exp="divAnio" tabindex="0">${fmt(tot)}</td></tr></tbody>`;
+  // Detalle de cada pago
+  document.getElementById("divAnioDet").innerHTML=`<h4 class="sub-h">Detalle de los pagos</h4><div class="scroll-x">`+tbl([["Fecha","f",fDt],["Sociedad","soc",x=>escH(x),"l","l"],["Accionista","acc",x=>x?escH(x):dash,"l","l"],["Concepto","info",x=>x?`<span class="t2">${escH(x)}</span>`:dash,"l","l"],["Monto","monto",fmt,"key"]],
+    DV.pagos.slice().sort((a,b)=>a.f.localeCompare(b.f)),{f:"Total",soc:"",acc:"",info:"",monto:tot})+`</div>`;
+  // Declarados en el año que siguen por pagar (no se suman)
+  const pend={};DV.decl.forEach(f=>pend[f.soc]=(pend[f.soc]||0)+f.monto);DV.pagos.forEach(f=>{if(f.soc in pend)pend[f.soc]-=f.monto;});
+  const pp=Object.entries(pend).filter(([,v])=>v>=0.5).sort((a,b)=>b[1]-a[1]);
+  const fus=[...new Set(socs.filter(g=>g.bob).map(g=>g.soc))];
+  document.getElementById("divAnioNote").innerHTML=[
+    DV.fuente==="mayor"?`Fuente: ${escH(DV.archivo)} (cuenta 205004). Montos netos pagados a los accionistas.`:`Fuente: balances de comprobación cargados (débitos a 205004). <b>Solo incluye los meses con balance</b>; sube el mayor general de la cuenta 205004 para tener el año completo.`,
+    fus.length?`${fus.join(", ")} forman parte de Bobcat (Fusión); sus pagos se muestran con su nombre original.`:"",
+    pp.length?`Declarados en el año y pendientes de pago al cierre de ${p.short} (no se suman al total): ${pp.map(([s,v])=>`${escH(s)} ${fmt(v)}`).join(" · ")}.`:""].filter(Boolean).join("<br>");
 }
 
 // ======================= VALOR Y DEUDA =======================
@@ -2375,7 +2479,7 @@ function renderCrec(){
 }
 
 // ---------- Cargar datos ----------
-const TIPO_LBL={balance:"Balance de comprobación",valuacion:"Valuación y fee",fee_anterior:"Fee / NAV anterior",deuda:"Deuda bancaria",dataroom:"Data Room",clientes:"Clientes y cánones",clientes_base:"Lista de clientes (contabilidad)",inquilinos:"Informe de inquilinos",auxiliar:"Auxiliar CxP / CxC",intercompanias:"Saldos entre compañías",desconocido:"No reconocido",error:"No se pudo abrir"};
+const TIPO_LBL={balance:"Balance de comprobación",valuacion:"Valuación y fee",fee_anterior:"Fee / NAV anterior",deuda:"Deuda bancaria",dataroom:"Data Room",clientes:"Clientes y cánones",clientes_base:"Lista de clientes (contabilidad)",inquilinos:"Informe de inquilinos",auxiliar:"Auxiliar CxP / CxC",dividendos:"Mayor de dividendos (205004)",intercompanias:"Saldos entre compañías",desconocido:"No reconocido",error:"No se pudo abrir"};
 let PEND_DS=null,PEND_LOG=null;
 function renderCarga(){
   const D=DS,per=Object.keys(D.BAL||{}).filter(k=>Object.keys(D.BAL[k]).length).sort().reverse();
@@ -2955,7 +3059,7 @@ const IR_MAP={
         "Utilidad neta":["res","tRes","Utilidad neta"],"NOI":["res","tRes","NOI"],"Caja y bancos":["detalle","tBG","Caja y bancos"],
         "Valor de mercado":["val","tProps",null,"Valor de mercado"],"NAV":["val","tProps",null,"NAV"],"Fee":["val","tProps",null,"Fee"]},
   res:{"Ingresos operativos":["res","tRes","Ingresos operativos brutos"],"Gastos operativos":["res","tRes","Gastos operativos"],"NOI":["res","tRes","NOI"],
-       "Intereses":["res","tRes","Intereses y comisiones bancarias"],"Utilidad neta":["res","tRes","Utilidad neta"]},
+       "Intereses":["res","tRes","Intereses y comisiones bancarias"],"Utilidad neta":["res","tRes","Utilidad neta"],"Dividendos pagados en el año":["res","tDivAnio"]},
   anio:{"Ingresos acumulados":["anio","tAnio","Ingresos operativos brutos"],"NOI acumulado":["anio","tAnio","NOI"],"Utilidad neta acumulada":["anio","tAnio","Utilidad neta"],
         "Ingreso promedio mensual":["anio","tAnio","Ingresos operativos brutos",null],"Meses con balance":["anio","tAnio"]},
   val:{"Valor de mercado":["val","tVal",null,"Valor de mercado"],"Deuda":["val","tVal",null,"Deuda"],"NAV":["val","tVal",null,"NAV"],"Cap rate":["val","tVal",null,"Cap rate"],"Fee":["val","tVal",null,"Fee"]},
@@ -3211,7 +3315,7 @@ document.addEventListener("click",e=>{const f=e.target.closest(".flag[data-nota]
 // ======================= EXPLICACIÓN DE LOS MONTOS (al pasar el cursor) =======================
 let EXP_POP=null,EXP_FIJO=false;
 function expHTML(x){const tot=x.totFmt==="%"?pct(x.total):x.totFmt==="x"?x2(x.total):fmt(x.total);
-  const L=x.lineas.slice(0,14),mas=x.lineas.length-L.length,fl=v=>x.totFmt==="%"?pct(v):x.totFmt==="x"?x2(v):fmt(v);
+  const L=x.lineas.slice(0,x.max||14),mas=x.lineas.length-L.length,fl=v=>x.totFmt==="%"?pct(v):x.totFmt==="x"?x2(v):fmt(v);
   return `<div class="exp-t">${escH(x.titulo)}</div><div class="exp-f">${x.formula}</div>`+(L.length?`<table class="exp-tab">${L.map(([a,b])=>`<tr><td>${escH(a)}</td><td>${fl(b)}</td></tr>`).join("")}${mas>0?`<tr><td class="tm">… y ${mas} más</td><td></td></tr>`:""}<tr class="exp-tot"><td>Total</td><td>${tot}</td></tr></table>`:"");}
 function expMostrar(el,fijo){const x=window.EXPL&&EXPL[el.dataset.exp];if(!x)return;expOcultar(true);
   const d=document.createElement("div");d.className="exp-pop";d.innerHTML=expHTML(x);document.body.appendChild(d);EXP_POP=d;EXP_FIJO=!!fijo;
